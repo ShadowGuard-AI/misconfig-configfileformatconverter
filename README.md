@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # misconfig-ConfigFileFormatConverter
 A simple command-line utility to convert configuration files between common formats (e.g., YAML to JSON, TOML to YAML). This helps normalize configurations and facilitates using other analysis tools. Uses `PyYAML`, `toml`, and `json` libraries. - Focused on Check for misconfigurations in configuration files or infrastructure definitions
 
