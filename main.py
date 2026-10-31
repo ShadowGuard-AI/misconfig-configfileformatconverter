@@ -1,7 +1,9 @@
 import argparse
 import json
 import logging
+import os
 import sys
+import tempfile
 
 try:
     import yaml
@@ -86,29 +88,44 @@ def write_file(data, file_path, file_format):
     Raises:
         ValueError: If there's an issue writing the file content.
     """
+    # Serialize fully to text first. A value the target format cannot
+    # hold fails here, before any output file is touched, so a failed
+    # conversion never leaves a partial file behind.
     try:
-        with open(file_path, 'w') as f:
-            if file_format == 'yaml':
-                try:
-                    yaml.dump(data, f, indent=2)  # Use indent for readability
-                except yaml.YAMLError as e:
-                    raise ValueError(f"Error writing YAML file: {e}")
-            elif file_format == 'json':
-                try:
-                    json.dump(data, f, indent=2)  # Use indent for readability
-                except TypeError as e:
-                     raise ValueError(f"Error writing JSON file: {e}")
-            elif file_format == 'toml':
-                try:
-                    toml.dump(data, f)
-                except toml.TomlEncodeError as e:
-                    raise ValueError(f"Error writing TOML file: {e}")
-            else:
-                raise ValueError(f"Unsupported output format: {file_format}")
+        if file_format == 'yaml':
+            try:
+                text = yaml.dump(data, indent=2)
+            except yaml.YAMLError as e:
+                raise ValueError(f"Error writing YAML file: {e}")
+        elif file_format == 'json':
+            try:
+                text = json.dumps(data, indent=2)
+            except TypeError as e:
+                raise ValueError(f"Error writing JSON file: {e}")
+        elif file_format == 'toml':
+            try:
+                text = toml.dumps(data)
+            except Exception as e:
+                raise ValueError(f"Error writing TOML file: {e}")
+        else:
+            raise ValueError(f"Unsupported output format: {file_format}")
     except ValueError as e:
         logging.error(e)
         raise
+
+    # Write to a temporary sibling and rename on success, so the
+    # output path only ever holds a complete conversion.
+    directory = os.path.dirname(os.path.abspath(file_path))
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".convert-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(text)
+        os.replace(tmp_path, file_path)
     except Exception as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         logging.error(f"An unexpected error occurred: {e}")
         raise
 
@@ -119,13 +136,34 @@ def main():
     parser = setup_argparse()
     args = parser.parse_args()
 
-    # Input validation: Check if input and output formats are the same.
+    # The output may never be the input file, in any spelling.
+    if os.path.exists(args.input_file) and os.path.exists(args.output_file):
+        same = os.path.realpath(args.input_file) == os.path.realpath(args.output_file)
+    else:
+        same = os.path.abspath(args.input_file) == os.path.abspath(args.output_file)
+    if same:
+        logging.error("Output path is the input file; refusing to overwrite it. Nothing was converted.")
+        sys.exit(1)
+
+    # Same format means no conversion happens, and no file is written.
+    # The old code warned about that and then rewrote the file anyway.
     if args.input_format == args.output_format:
-        logging.warning("Input and output formats are the same.  No conversion will occur.")
+        logging.error("Input and output formats are the same. No conversion will occur, and no file has been written.")
+        sys.exit(1)
 
     try:
+        # An empty input holds nothing to convert.
+        with open(args.input_file, 'r') as f:
+            raw = f.read()
+        if raw.strip() == "":
+            logging.error("Input file is empty. Nothing was converted.")
+            sys.exit(1)
+
         # Load the input file
         data = load_file(args.input_file, args.input_format)
+        if data is None:
+            logging.error("Input file parsed to nothing. Nothing was converted.")
+            sys.exit(1)
 
         # Write to the output file
         write_file(data, args.output_file, args.output_format)

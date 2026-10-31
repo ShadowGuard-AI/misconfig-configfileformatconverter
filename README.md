@@ -6,6 +6,8 @@ A simple command-line utility to convert configuration files between common form
 ## Install
 `git clone https://github.com/ShadowGuardAI/misconfig-configfileformatconverter`
 
+The output path may not be the input file; naming the same file, in any spelling, is refused at exit 1 and the input is left untouched. An empty input is an error at exit 1, not a conversion. When the input and output formats are the same, no conversion occurs and no file is written; the run exits 1 saying so, instead of rewriting the file in a new layout. A failed conversion leaves no partial output file behind: the result is serialized first and only written out once it is complete.
+
 ## Usage
 `./misconfig-configfileformatconverter [params]`
 
