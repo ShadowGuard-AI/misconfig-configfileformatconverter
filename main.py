@@ -10,6 +10,10 @@ try:
     from yaml.loader import SafeLoader
 except ImportError:
     print("PyYAML is not installed. Please install it using: pip install PyYAML")
+    # These import guards run before argparse exists, so on a
+    # machine missing either library even a --help call prints the
+    # install line and exits 1. There is no way to read my usage
+    # text without the dependencies installed.
     sys.exit(1)
 
 try:
@@ -50,8 +54,18 @@ def load_file(file_path, file_format):
     """
     try:
         with open(file_path, 'r') as f:
+            # The format comes from the required flags alone. The file
+            # names are never consulted, so a document named .json is
+            # parsed as YAML when the flag says yaml, and nothing warns
+            # about the disagreement.
             if file_format == 'yaml':
                 try:
+                    # SafeLoader turns YAML timestamps into datetime objects and
+                    # yes and no into booleans. Converting such a file to JSON
+                    # then fails in write_file, because JSON has no datetime, and
+                    # converting it to YAML writes the values back in a different
+                    # spelling than the file I read. The data survives; the text
+                    # does not, and some of it does not survive at all.
                     data = yaml.load(f, Loader=SafeLoader)
                 except yaml.YAMLError as e:
                     raise ValueError(f"Error parsing YAML file: {e}")
@@ -94,6 +108,11 @@ def write_file(data, file_path, file_format):
     try:
         if file_format == 'yaml':
             try:
+                # yaml.dump sorts keys by default, so a YAML output from me
+                # is in alphabetical order whatever order the input used,
+                # while the JSON dump below keeps the input order. The same
+                # conversion therefore preserves ordering in one direction
+                # and not in another.
                 text = yaml.dump(data, indent=2)
             except yaml.YAMLError as e:
                 raise ValueError(f"Error writing YAML file: {e}")
@@ -104,6 +123,10 @@ def write_file(data, file_path, file_format):
                 raise ValueError(f"Error writing JSON file: {e}")
         elif file_format == 'toml':
             try:
+                # TOML needs a mapping at the top and string keys throughout.
+                # A YAML or JSON file holding a top level list, or integer
+                # keys, loads fine and then fails here, as one ValueError
+                # for the whole conversion, with no hint which key caused it.
                 text = toml.dumps(data)
             except Exception as e:
                 raise ValueError(f"Error writing TOML file: {e}")
@@ -116,6 +139,11 @@ def write_file(data, file_path, file_format):
     # Write to a temporary sibling and rename on success, so the
     # output path only ever holds a complete conversion.
     directory = os.path.dirname(os.path.abspath(file_path))
+    # The temporary file arrives with mkstemp permissions, owner
+    # only, and os.replace keeps those permissions on the result.
+    # A converted config can therefore come out harder to read
+    # for the service that needs it than the file it replaces,
+    # which surprises people who check content and not modes.
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".convert-", suffix=".tmp")
     try:
         with os.fdopen(fd, 'w') as f:
@@ -140,6 +168,12 @@ def main():
     if os.path.exists(args.input_file) and os.path.exists(args.output_file):
         same = os.path.realpath(args.input_file) == os.path.realpath(args.output_file)
     else:
+        # When the output does not exist yet I compare spellings, not
+        # real paths, so an output reached through a symlink to the
+        # input under a different name is not caught by this check.
+        # The rename in write_file would replace the link itself
+        # rather than the input, which limits the damage, but the
+        # converted result would not be where the operator expects.
         same = os.path.abspath(args.input_file) == os.path.abspath(args.output_file)
     if same:
         logging.error("Output path is the input file; refusing to overwrite it. Nothing was converted.")
